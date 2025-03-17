@@ -1,23 +1,6 @@
 import { Component, ElementRef, ViewChild, OnInit } from '@angular/core';
-import { SCRData as Data } from '../SCR';
-import { v4 as uuidv4, v4 } from 'uuid';
-import _ from 'lodash';
-
-interface Node {
-  id: string; // uuid
-  key: string;
-  value: string | void;
-  depth: number;
-  parentIds: string[];
-  isOnlyChild: boolean;
-  isSelected: boolean;
-}
-
-interface Edge {
-  id: string; // uuid
-  source: Node;
-  target: Node;
-}
+import { DataTreeService } from './data-tree.service';
+import { Node, Dot, KeyLabel } from './data-tree.model';
 
 @Component({
   selector: 'app-data-tree',
@@ -27,25 +10,94 @@ interface Edge {
 })
 export class DataTreeComponent implements OnInit {
   @ViewChild('canvas') canvas: ElementRef<HTMLCanvasElement> | undefined;
+  nodeGroups: any = [];
+  xStart = 50;
+  yStart = 50;
+  canvasWidth = 800;
+  canvasHeight = 800;
+  colWidth = 100;
+  rowHeight = 100;
 
-  data = JSON.parse(JSON.stringify(Data));
-  keyDepth: number = 0;
-  parentIds: string[] = [];
-  nodes: Node[] = [];
-  edges: Edge[] = [];
-
-  constructor() {
-    this.parseJSONtoTree(this.data, this.keyDepth, this.parentIds); // root node
-    console.log('GROUP BY DEPTH', _.groupBy<Node[]>(this.nodes, 'depth'));
-  }
+  constructor(private dataService: DataTreeService) {}
 
   ngOnInit() {
     //Called after the constructor, initializing input properties, and the first call to ngOnChanges.
     //Add 'implements OnInit' to the class.
+    this.nodeGroups = this.onParseTree();
   }
 
   ngAfterViewInit(): void {
     this.draw();
+  }
+
+  onParseTree() {
+    const nodeGroups = this.dataService.groupNodesByDepth();
+    console.log('Parsing tree...', nodeGroups);
+    return nodeGroups;
+  }
+
+  getParentIndex(parentId: string, prevLayer: Node[]): number {
+    let parentIndex = -1;
+    for (let i = 0; i < prevLayer.length; i++) {
+      if (prevLayer[i].id === parentId) {
+        parentIndex = i;
+        break;
+      }
+    }
+    return parentIndex;
+  }
+
+  getXBandWidth(layerLength: number): number {
+    return this.canvasWidth / layerLength;
+  }
+
+  getXBandWidthStart(parentIndex: number, layerLength: number): number {
+    return (this.canvasWidth / layerLength) * (parentIndex + 1);
+  }
+
+  drawDot(dot: Dot, ctx: CanvasRenderingContext2D): void {
+    ctx.beginPath();
+    ctx.arc(dot.x, dot.y, dot.radius, dot.startAngle, dot.endAngle);
+    ctx.fillStyle = dot.fillColour;
+    ctx.fill();
+    return;
+  }
+
+  drawKeyLabel(keyLabel: KeyLabel, ctx: CanvasRenderingContext2D): void {
+    ctx.beginPath();
+    ctx.font = `${keyLabel.fontSize} ${keyLabel.font}`;
+    ctx.fillStyle = keyLabel.fillColour;
+    ctx.fillText(keyLabel.text, keyLabel.x, keyLabel.y, keyLabel.maxwidth);
+    return;
+  }
+
+  drawLayer(layer: any, ctx: CanvasRenderingContext2D): void {
+    layer.forEach((el: any, index: number) => {
+      const layerLength = layer.length;
+      const newDot: Dot = {
+        id: el.id,
+        x: this.xStart + this.getXBandWidthStart(index, layerLength),
+        y: this.yStart,
+        radius: 10, // radius
+        startAngle: 0,
+        endAngle: 2 * Math.PI, // full circle
+        counterclockwise: true,
+        fillColour: '#0096FF',
+      };
+      this.drawDot(newDot, ctx);
+      const newKeyLabel: KeyLabel = {
+        id: el.id,
+        x: this.xStart + this.getXBandWidthStart(index, layerLength),
+        y: this.yStart + 20,
+        text: el.key,
+        fillColour: 'black',
+        strokeColour: 'black',
+        font: 'Arial',
+        fontSize: 12,
+        maxwidth: 100,
+      };
+      this.drawKeyLabel(newKeyLabel, ctx);
+    });
   }
 
   private draw(): void {
@@ -53,59 +105,12 @@ export class DataTreeComponent implements OnInit {
       let elmnt = this.canvas.nativeElement;
       let ctx = elmnt.getContext('2d');
       if (ctx) {
-        ctx.fillStyle = 'red';
-        ctx.fillRect(0, 0, 100, 100);
+        const firstLayer = this.nodeGroups[0];
+        const secondLayer = this.nodeGroups[1];
+        this.drawLayer(firstLayer, ctx);
+        this.yStart += 200;
+        this.drawLayer(secondLayer, ctx);
       }
     }
-  }
-
-  parseJSONtoTree(data: JSON, keyDepth: number, parentIds: string[]) {
-    console.log('DATA PARSED IN', data);
-    Object.entries(data).map(([key, value]) => {
-      if (Array.isArray(value)) {
-        value.map((item, index) => {
-          const newId: string = uuidv4().toString();
-          parentIds.push(newId);
-          const node: Node = {
-            id: newId,
-            key: key,
-            value: this.parseJSONtoTree(item, keyDepth + 1, parentIds),
-            depth: keyDepth,
-            parentIds: parentIds,
-            isOnlyChild: Object.keys(data).length === 1,
-            isSelected: false,
-          };
-          this.nodes.push(node);
-        });
-      } else if (typeof value === 'object' && !Array.isArray(value)) {
-        console.log('IS OBJECT key:', key, 'value:', value);
-        const newId: string = uuidv4().toString();
-        parentIds.push(newId);
-        const node: Node = {
-          id: newId,
-          key: key,
-          value: this.parseJSONtoTree(value, keyDepth + 1, parentIds),
-          depth: keyDepth,
-          parentIds: parentIds,
-          isOnlyChild: Object.keys(data).length === 1,
-          isSelected: false,
-        };
-        this.nodes.push(node);
-      } else if (typeof value !== 'object' && !Array.isArray(value)) {
-        console.log('IS VALUE key:', key, 'value:', value);
-        const node: Node = {
-          id: uuidv4(),
-          key: key,
-          value: value,
-          depth: keyDepth,
-          parentIds: parentIds,
-          isOnlyChild: Object.keys(data).length === 1,
-          isSelected: false,
-        };
-        this.nodes.push(node);
-      }
-    });
-    this.keyDepth++;
-    console.log('NODES', this.nodes);
   }
 }
